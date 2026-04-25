@@ -110,6 +110,13 @@ jobs:
           distribution: 'temurin'
           cache: 'gradle'
 
+      # setup-java writes a default ~/.m2/settings.xml with a GitHub Packages
+      # credential template. Beam's applyJavaNature applies net.linguica.maven-settings
+      # which actively reads that file, fails to decrypt the templated credential,
+      # and aborts gradle configuration.
+      - name: Remove auto-generated Maven settings.xml
+        run: rm -f ~/.m2/settings.xml
+
       - name: Resolve target project
         id: target
         env:
