@@ -51,7 +51,7 @@ jobs:
               # Read Beam's current version from gradle.properties so the dev tag
               # tracks whatever release line we're forking from (2.74, 2.75, ...).
               base="$(grep -E '^version=' gradle.properties | cut -d= -f2 | sed 's/-SNAPSHOT$//')"
-              v="${base}-dev-$(date +%Y%m%d-%H%M%S)"
+              v="2.74.0-supabase.3"
               ;;
           esac
           echo "version=${v}" >> "$GITHUB_OUTPUT"
