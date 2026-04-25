@@ -1,5 +1,6 @@
 name: Publish Supabase Beam fork
 
+# Publishes a versioned snapshot of the Beam modules
 on:
   workflow_dispatch:
     inputs:
@@ -9,18 +10,68 @@ on:
         options: [staging, prod, both]
         default: staging
       version:
-        description: 'Version suffix (e.g. supabase.1 -> 2.74.0-supabase.1)'
+        description: 'Full version to publish (e.g. 2.74.0-supabase.3)'
         required: true
         type: string
-      module:
-        description: 'Beam module to publish'
-        type: choice
-        options:
-          - ':sdks:java:io:iceberg'
-        default: ':sdks:java:io:iceberg'
+  # GitHub release: tag like v2.74.0-supabase.3 publishes that version to both envs.
+  release:
+    types: [published]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      envs: ${{ steps.resolve.outputs.envs }}
+    steps:
+      - uses: actions/checkout@v4
+        if: github.event_name == 'push'
+      - id: resolve
+        run: |
+          # Resolve version
+          case "${{ github.event_name }}" in
+            release)
+              v="${{ github.event.release.tag_name }}"
+              v="${v#v}"  # strip leading "v" (v2.74.0-supabase.3 -> 2.74.0-supabase.3)
+              ;;
+            workflow_dispatch)
+              v="${{ inputs.version }}"
+              ;;
+            push)
+              # Read Beam's current version from gradle.properties so the dev tag
+              # tracks whatever release line we're forking from (2.74, 2.75, ...).
+              base="$(grep -E '^version=' gradle.properties | cut -d= -f2 | sed 's/-SNAPSHOT$//')"
+              v="${base}-dev-$(date +%Y%m%d-%H%M%S)"
+              ;;
+          esac
+          echo "version=${v}" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: ${v}"
+
+          # Resolve target envs
+          case "${{ github.event_name }}" in
+            release)
+              envs='["staging","prod"]'
+              ;;
+            workflow_dispatch)
+              if [[ "${{ inputs.target }}" == "both" ]]; then
+                envs='["staging","prod"]'
+              else
+                envs='["${{ inputs.target }}"]'
+              fi
+              ;;
+            push)
+              envs='["staging"]'
+              ;;
+          esac
+          echo "envs=${envs}" >> "$GITHUB_OUTPUT"
+          echo "Resolved envs: ${envs}"
+
   publish:
+    needs: setup
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -29,7 +80,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        env: ${{ inputs.target == 'both' && fromJSON('["staging","prod"]') || fromJSON(format('["{0}"]', inputs.target)) }}
+        env: ${{ fromJSON(needs.setup.outputs.envs) }}
+
+    env:
+      MODULES: |
+        :sdks:java:core
+        :sdks:java:managed
+        :sdks:java:io:google-cloud-platform
+        :sdks:java:io:iceberg
+        :runners:direct-java
+        :runners:google-cloud-dataflow-java
 
     steps:
       - name: Checkout
@@ -42,6 +102,7 @@ jobs:
         with:
           java-version: '11'
           distribution: 'temurin'
+          cache: 'gradle'
 
       - name: Resolve target project
         id: target
@@ -125,15 +186,20 @@ jobs:
           }
           EOF
 
-      - name: Publish ${{ inputs.module }} to ${{ matrix.env }}
+      - name: Publish all modules to ${{ matrix.env }}
         env:
-          MODULE: ${{ inputs.module }}
-          VERSION: 2.74.0-${{ inputs.version }}
+          VERSION: ${{ needs.setup.outputs.version }}
           REPO_URL: artifactregistry://europe-maven.pkg.dev/${{ steps.target.outputs.project }}/dataflow-java-custom
         run: |
-          ./gradlew "${MODULE}:publishMavenJavaPublicationToArtifactRegistryRepository" \
-            -Ppublishing \
-            --init-script /tmp/beam-publish-init.gradle \
-            -DtargetModule="${MODULE}" \
-            -PpublishVersion="${VERSION}" \
-            -PmavenRepoUrl="${REPO_URL}"
+          while read -r module; do
+            [[ -z "$module" ]] && continue
+            echo "::group::Publishing ${module} @ ${VERSION} to ${{ matrix.env }}"
+            ./gradlew "${module}:publishMavenJavaPublicationToArtifactRegistryRepository" \
+              -Ppublishing \
+              --init-script /tmp/beam-publish-init.gradle \
+              -DtargetModule="${module}" \
+              -PpublishVersion="${VERSION}" \
+              -PmavenRepoUrl="${REPO_URL}" \
+              --console=plain
+            echo "::endgroup::"
+          done <<< "$MODULES"
