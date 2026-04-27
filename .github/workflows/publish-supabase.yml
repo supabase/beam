@@ -1,0 +1,212 @@
+name: Publish Supabase Beam fork
+
+# Publishes a versioned snapshot of the Beam modules
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Where to publish'
+        type: choice
+        options: [staging, prod, both]
+        default: staging
+      version:
+        description: 'Full version to publish (e.g. 2.74.0-supabase.3)'
+        required: true
+        type: string
+  # GitHub release: tag like v2.74.0-supabase.3 publishes that version to both envs.
+  release:
+    types: [published]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      envs: ${{ steps.resolve.outputs.envs }}
+    steps:
+      - uses: actions/checkout@v4
+        if: github.event_name == 'push'
+      - id: resolve
+        run: |
+          # Resolve version
+          case "${{ github.event_name }}" in
+            release)
+              v="${{ github.event.release.tag_name }}"
+              v="${v#v}"  # strip leading "v" (v2.74.0-supabase.3 -> 2.74.0-supabase.3)
+              ;;
+            workflow_dispatch)
+              v="${{ inputs.version }}"
+              ;;
+            push)
+              # Read Beam's current version from gradle.properties so the dev tag
+              # tracks whatever release line we're forking from (2.74, 2.75, ...).
+              base="$(grep -E '^version=' gradle.properties | cut -d= -f2 | sed 's/-SNAPSHOT$//')"
+              v="${base}-dev-$(date +%Y%m%d-%H%M%S)"
+              ;;
+          esac
+          echo "version=${v}" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: ${v}"
+
+          # Resolve target envs
+          case "${{ github.event_name }}" in
+            release)
+              envs='["staging","prod"]'
+              ;;
+            workflow_dispatch)
+              if [[ "${{ inputs.target }}" == "both" ]]; then
+                envs='["staging","prod"]'
+              else
+                envs='["${{ inputs.target }}"]'
+              fi
+              ;;
+            push)
+              envs='["staging"]'
+              ;;
+          esac
+          echo "envs=${envs}" >> "$GITHUB_OUTPUT"
+          echo "Resolved envs: ${envs}"
+
+  publish:
+    needs: setup
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        env: ${{ fromJSON(needs.setup.outputs.envs) }}
+
+    env:
+      MODULES: |
+        :sdks:java:core
+        :sdks:java:managed
+        :sdks:java:io:google-cloud-platform
+        :sdks:java:io:iceberg
+        :runners:direct-java
+        :runners:google-cloud-dataflow-java
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Set up JDK 11
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      # setup-java writes a default ~/.m2/settings.xml with a GitHub Packages
+      # credential template. Beam's applyJavaNature applies net.linguica.maven-settings
+      # which actively reads that file, fails to decrypt the templated credential,
+      # and aborts gradle configuration.
+      - name: Remove auto-generated Maven settings.xml
+        run: rm -f ~/.m2/settings.xml
+
+      - name: Resolve target project
+        id: target
+        env:
+          PROJECT_STAGING: ${{ vars.GCP_PROJECT_STAGING }}
+          PROJECT_PROD: ${{ vars.GCP_PROJECT_PROD }}
+          WIF_STAGING: ${{ vars.WIF_PROVIDER_STAGING }}
+          WIF_PROD: ${{ vars.WIF_PROVIDER_PROD }}
+        run: |
+          if [[ "${{ matrix.env }}" == "prod" ]]; then
+            project="$PROJECT_PROD"
+            wif_provider="$WIF_PROD"
+          else
+            project="$PROJECT_STAGING"
+            wif_provider="$WIF_STAGING"
+          fi
+          echo "project=${project}" >> "$GITHUB_OUTPUT"
+          echo "wif_provider=${wif_provider}" >> "$GITHUB_OUTPUT"
+          echo "service_account=beam-publisher@${project}.iam.gserviceaccount.com" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ steps.target.outputs.wif_provider }}
+          service_account: ${{ steps.target.outputs.service_account }}
+
+      # Adds an ArtifactRegistry maven repo to Beam's existing mavenJava publication
+      # without touching upstream Beam source (keeps fork drift minimal).
+      #
+      # We use artifactregistry-auth-common directly to fetch an ADC-resolved access
+      # token instead of the artifactregistry-gradle-plugin, because the plugin's
+      # artifactregistry:// URL transport hook only registers for repos created at
+      # apply time. Beam configures publishing during evaluation, so our extra repo
+      # has to be added in afterEvaluate — which is too late for the plugin's hook
+      # (https://github.com/GoogleCloudPlatform/artifact-registry-maven-tools/issues/45).
+      # Doing the auth manually with Basic auth + oauth2accesstoken is exactly what
+      # the plugin does internally, just at the right phase.
+      - name: Write Gradle init script
+        run: |
+          cat > /tmp/beam-publish-init.gradle <<'EOF'
+          initscript {
+              repositories { mavenCentral() }
+              dependencies {
+                  classpath 'com.google.cloud.artifactregistry:artifactregistry-auth-common:2.2.5'
+              }
+          }
+
+          import com.google.cloud.artifactregistry.auth.DefaultCredentialProvider
+          import com.google.auth.oauth2.OAuth2Credentials
+
+          allprojects {
+              afterEvaluate { proj ->
+                  if (proj.path != System.getProperty('targetModule')) return
+
+                  if (proj.hasProperty('publishVersion')) {
+                      proj.version = proj.publishVersion
+                  }
+
+                  if (proj.plugins.hasPlugin('maven-publish')) {
+                      def credential = DefaultCredentialProvider.getInstance().getCredential() as OAuth2Credentials
+                      credential.refreshIfExpired()
+                      def accessToken = credential.getAccessToken().getTokenValue()
+
+                      proj.publishing {
+                          repositories {
+                              maven {
+                                  name = 'ArtifactRegistry'
+                                  url = uri(proj.mavenRepoUrl.toString().replaceFirst('artifactregistry://', 'https://'))
+                                  credentials {
+                                      username = 'oauth2accesstoken'
+                                      password = accessToken
+                                  }
+                                  authentication {
+                                      basic(BasicAuthentication)
+                                  }
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+          EOF
+
+      - name: Publish all modules to ${{ matrix.env }}
+        env:
+          VERSION: ${{ needs.setup.outputs.version }}
+          REPO_URL: artifactregistry://europe-maven.pkg.dev/${{ steps.target.outputs.project }}/dataflow-java-custom
+        run: |
+          while read -r module; do
+            [[ -z "$module" ]] && continue
+            echo "::group::Publishing ${module} @ ${VERSION} to ${{ matrix.env }}"
+            ./gradlew "${module}:publishMavenJavaPublicationToArtifactRegistryRepository" \
+              -Ppublishing \
+              --init-script /tmp/beam-publish-init.gradle \
+              -DtargetModule="${module}" \
+              -PpublishVersion="${VERSION}" \
+              -PmavenRepoUrl="${REPO_URL}" \
+              --console=plain
+            echo "::endgroup::"
+          done <<< "$MODULES"
