@@ -83,11 +83,30 @@ jobs:
         env: ${{ fromJSON(needs.setup.outputs.envs) }}
 
     env:
+      # Modules whose runtime classpath we need a self-consistent set for.
+      # See the long comment on the init script below for why every transitive
+      # Beam module that any consumer pulls must be republished here — leaving
+      # any of them resolvable only from Apache snapshots reintroduces the
+      # SNAPSHOT/supabase version split.
       MODULES: |
+        :model:pipeline
+        :model:fn-execution
+        :model:job-management
         :sdks:java:core
-        :sdks:java:managed
+        :sdks:java:harness
+        :sdks:java:expansion-service
+        :sdks:java:transform-service:launcher
+        :sdks:java:extensions:arrow
+        :sdks:java:extensions:avro
+        :sdks:java:extensions:protobuf
+        :sdks:java:extensions:google-cloud-platform-core
+        :sdks:java:io:hadoop-common
+        :sdks:java:io:parquet
         :sdks:java:io:google-cloud-platform
         :sdks:java:io:iceberg
+        :sdks:java:managed
+        :runners:core-java
+        :runners:java-fn-execution
         :runners:direct-java
         :runners:google-cloud-dataflow-java
 
@@ -162,11 +181,29 @@ jobs:
 
           allprojects {
               afterEvaluate { proj ->
-                  if (proj.path != System.getProperty('targetModule')) return
-
+                  // Override the project version on EVERY Beam project, not just
+                  // the one being published in this gradle invocation. Beam's
+                  // POM generator stamps each project(...) dependency with that
+                  // project's current `version`. If a sibling Beam project
+                  // (e.g. :sdks:java:core when publishing :runners:google-cloud-dataflow-java)
+                  // keeps the default `2.74.0-SNAPSHOT` from gradle.properties,
+                  // its coordinate ends up in the published POM as
+                  // `beam-sdks-java-core:2.74.0-SNAPSHOT` even though we are
+                  // also republishing it at `publishVersion`. Consumers then
+                  // see two conflicting version asks for the same module and
+                  // Gradle's conflict resolution picks SNAPSHOT, dragging in
+                  // upstream master bytecode that diverges from the worker
+                  // container baked into :runners:google-cloud-dataflow-java's
+                  // dataflow.properties.
                   if (proj.hasProperty('publishVersion')) {
                       proj.version = proj.publishVersion
                   }
+
+                  // Only wire up the ArtifactRegistry publication on the
+                  // module we are actually publishing in this invocation —
+                  // each module gets its own gradle invocation in the loop
+                  // below, so this gate keeps publish work scoped per call.
+                  if (proj.path != System.getProperty('targetModule')) return
 
                   if (proj.plugins.hasPlugin('maven-publish')) {
                       def credential = DefaultCredentialProvider.getInstance().getCredential() as OAuth2Credentials
