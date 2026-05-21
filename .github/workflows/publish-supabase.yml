@@ -1,19 +1,16 @@
 name: Publish Supabase Beam fork (2.74-supabase)
 
-# Publishes fork-patched Beam shadow jars to the supabase
-# `dataflow-java-custom` Artifact Registry repo. Triggered on push to this
-# fork branch — every push publishes a fresh, timestamped version to staging
-# (prod target is commented out below; uncomment when we're ready to promote).
+# Publishes fork-patched Beam jars to the supabase `dataflow-java-custom`
+# Artifact Registry repo. Triggered on push to this fork branch — every push
+# publishes a fresh, timestamped version to staging (prod target is commented
+# out below; uncomment when we're ready to promote).
 #
-# Currently the only thing this fork carries is a build-time substitution of
-# `iceberg-aws` with our patched fork version (1.10.0-supabase.2), so that
-# the shadowed `:sdks:java:io:expansion-service` jar bundles the patched
-# AwsProperties / AwsClientProperties classes. That's the jar Dataflow's
-# Managed I/O stages to GCS at job-launch time for any pipeline that uses
-# `Managed.write(Managed.ICEBERG)`. With upstream iceberg-aws baked in, our
-# user-supplied `client.credentials-provider` class is unreachable from
-# Iceberg's TCCL-based class lookup; with our patched version baked in,
-# the lookup succeeds.
+# Currently the only patch this fork carries is the iceberg manifest
+# bound-padding fix in `:sdks:java:io:iceberg` (PR pending upstream): on the
+# write path Beam was copying ByteBuffer.array() instead of [position, limit),
+# leaking trailing 0x00 bytes into Iceberg manifest column bounds and
+# breaking equality predicate pushdown for the minimum value of any
+# string column.
 #
 # MODULES is intentionally a list so additional fork-patched Beam artifacts
 # can be added later under the same publish job and version stamp.
@@ -60,10 +57,7 @@ jobs:
     env:
       # Modules to publish. All stamped with the same workflow version so the
       # consumer can pin a single `beam = "<version>"` in its catalog and
-      # consume all of them as a coherent set. First six mirror the existing
-      # supabase/master fork's MODULES; :sdks:java:io:expansion-service is
-      # added so the shadowed jar (which bundles our patched iceberg-aws) is
-      # also stamped at the fork version.
+      # consume all of them as a coherent set.
       MODULES: |
         :sdks:java:core
         :sdks:java:managed
@@ -71,12 +65,6 @@ jobs:
         :sdks:java:io:iceberg
         :runners:direct-java
         :runners:google-cloud-dataflow-java
-        :sdks:java:io:expansion-service
-
-      # The fork-published iceberg-aws version we substitute into Beam's
-      # build (via `resolutionStrategy.force` in the init script below). When
-      # bumping iceberg-aws's fork tag, bump this too.
-      PATCHED_ICEBERG_AWS_VERSION: 1.10.0-supabase.1
 
     steps:
       - name: Checkout
@@ -125,13 +113,7 @@ jobs:
           service_account: ${{ steps.target.outputs.service_account }}
 
       # Init script that:
-      #   1. Adds the supabase Artifact Registry as a consumption repo on every
-      #      project (so the io-expansion-service shadowJar can pull our patched
-      #      iceberg-aws:<PATCHED_ICEBERG_AWS_VERSION> from it).
-      #   2. Forces `org.apache.iceberg:iceberg-aws` to the patched version
-      #      everywhere via resolutionStrategy.force, so the shaded jar bundles
-      #      our classes instead of upstream Maven Central's unpatched 1.10.0.
-      #   3. Overrides project.version on EVERY project (not just the target
+      #   1. Overrides project.version on EVERY project (not just the target
       #      module) to publishVersion — so cross-module deps in generated POMs
       #      reference each other at the fork version. Without this, sibling
       #      Beam modules keep gradle.properties' default `2.74.0-SNAPSHOT` and
@@ -139,7 +121,7 @@ jobs:
       #      SNAPSHOT, which causes downstream conflict-resolution to discard
       #      the fork's version. (See discussion in supabase/data-engineering
       #      iceberg AbstractMethodError debugging.)
-      #   4. Configures the ArtifactRegistry publication repo on the module
+      #   2. Configures the ArtifactRegistry publication repo on the module
       #      we're currently publishing.
       - name: Write Gradle init script
         run: |
@@ -154,35 +136,14 @@ jobs:
           import com.google.cloud.artifactregistry.auth.DefaultCredentialProvider
           import com.google.auth.oauth2.OAuth2Credentials
 
-          // Resolve OAuth token once per gradle invocation; shared between
-          // the consumption repo and the publication repo.
+          // Resolve OAuth token once per gradle invocation for the
+          // publication repo.
           def credential = DefaultCredentialProvider.getInstance().getCredential() as OAuth2Credentials
           credential.refreshIfExpired()
           def accessToken = credential.getAccessToken().getTokenValue()
 
           allprojects { proj ->
               def httpsRepoUrl = proj.findProperty('mavenRepoUrl')?.toString()?.replaceFirst('artifactregistry://', 'https://')
-              def patchedIcebergAwsVersion = proj.findProperty('patchedIcebergAwsVersion')?.toString()
-
-              if (httpsRepoUrl != null) {
-                  proj.repositories {
-                      maven {
-                          name = 'ArtifactRegistryConsume'
-                          url = uri(httpsRepoUrl)
-                          credentials {
-                              username = 'oauth2accesstoken'
-                              password = accessToken
-                          }
-                          authentication { basic(BasicAuthentication) }
-                      }
-                  }
-              }
-
-              if (patchedIcebergAwsVersion != null) {
-                  proj.configurations.all {
-                      resolutionStrategy.force "org.apache.iceberg:iceberg-aws:${patchedIcebergAwsVersion}"
-                  }
-              }
 
               afterEvaluate {
                   // Sibling MODULES projects: stamp at publishVersion so the
@@ -236,7 +197,6 @@ jobs:
               --init-script /tmp/beam-publish-init.gradle \
               -DtargetModule="${module}" \
               -PpublishVersion="${VERSION}" \
-              -PpatchedIcebergAwsVersion="${PATCHED_ICEBERG_AWS_VERSION}" \
               -PmavenRepoUrl="${REPO_URL}" \
               --console=plain
             echo "::endgroup::"
