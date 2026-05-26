@@ -76,7 +76,7 @@ jobs:
         :model:pipeline
         :model:fn-execution
         :model:job-management
-        :sdks:java:transform-service-launcher
+        :sdks:java:transform-service:launcher
         :runners:core-java
         :sdks:java:harness
         :sdks:java:expansion-service
