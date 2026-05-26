@@ -58,6 +58,14 @@ jobs:
       # Modules to publish. All stamped with the same workflow version so the
       # consumer can pin a single `beam = "<version>"` in its catalog and
       # consume all of them as a coherent set.
+      # The first six are the modules the data-engineering templates depend on
+      # directly. The rest are transitive Beam siblings declared in those
+      # modules' POMs at the unqualified fork base version (2.74.0). Since
+      # 2.74.0 is unreleased upstream, those refs can't resolve from Maven
+      # Central — so we publish the whole transitive set under the same
+      # -supabase-<ts> stamp. Expand this list whenever a new consumer dep
+      # surfaces another unresolved sibling. Drop the transitives once Beam
+      # 2.74 GAs and we can rely on Maven Central for non-patched modules.
       MODULES: |
         :sdks:java:core
         :sdks:java:managed
@@ -65,6 +73,18 @@ jobs:
         :sdks:java:io:iceberg
         :runners:direct-java
         :runners:google-cloud-dataflow-java
+        :model:pipeline
+        :model:fn-execution
+        :model:job-management
+        :sdks:java:transform-service-launcher
+        :runners:core-java
+        :sdks:java:harness
+        :sdks:java:expansion-service
+        :sdks:java:extensions:avro
+        :sdks:java:extensions:google-cloud-platform-core
+        :sdks:java:extensions:protobuf
+        :sdks:java:extensions:arrow
+        :sdks:java:io:parquet
 
     steps:
       - name: Checkout
