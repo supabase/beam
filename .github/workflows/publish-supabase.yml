@@ -52,7 +52,7 @@ jobs:
       matrix:
         env:
           - staging
-          # - prod  # uncomment to also publish to prod on each push
+          - prod
 
     env:
       # Modules to publish. All stamped with the same workflow version so the
