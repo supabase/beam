@@ -85,6 +85,8 @@ jobs:
         :sdks:java:extensions:protobuf
         :sdks:java:extensions:arrow
         :sdks:java:io:parquet
+        :sdks:java:io:hadoop-common
+        :runners:java-fn-execution
 
     steps:
       - name: Checkout
