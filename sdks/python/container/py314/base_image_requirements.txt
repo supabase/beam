@@ -23,7 +23,7 @@
 
 aiofiles==25.1.0
 aiohappyeyeballs==2.6.1
-aiohttp==3.13.4
+aiohttp==3.14.0
 aiosignal==1.4.0
 annotated-types==0.7.0
 anyio==4.13.0
@@ -98,7 +98,7 @@ httplib2==0.31.2
 httpx==0.28.1
 hyperframe==6.1.0
 hypothesis==6.148.3
-idna==3.11
+idna==3.15
 importlib_metadata==8.7.1
 iniconfig==2.3.0
 jaraco.classes==3.4.0
@@ -184,7 +184,7 @@ tqdm==4.67.3
 typing-inspection==0.4.2
 typing_extensions==4.15.0
 tzdata==2025.3
-urllib3==2.6.3
+urllib3==2.7.0
 virtualenv-clone==0.5.7
 websockets==16.0
 wheel==0.46.3
