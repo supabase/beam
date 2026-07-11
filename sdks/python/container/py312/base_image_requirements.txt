@@ -23,7 +23,7 @@
 
 aiofiles==25.1.0
 aiohappyeyeballs==2.6.1
-aiohttp==3.13.4
+aiohttp==3.14.1
 aiosignal==1.4.0
 annotated-types==0.7.0
 anyio==4.13.0
@@ -41,7 +41,7 @@ charset-normalizer==3.4.6
 click==8.3.1
 cloud-sql-python-connector==1.20.1
 crcmod==1.7
-cryptography==46.0.6
+cryptography==48.0.1
 Cython==3.2.4
 dill==0.3.1.1
 distro==1.9.0
@@ -119,7 +119,7 @@ mmh3==5.2.1
 mock==5.2.0
 more-itertools==10.8.0
 multidict==6.7.1
-nltk==3.9.4
+nltk==3.10.0
 numpy==2.4.4
 oauth2client==4.1.3
 objsize==0.7.1
@@ -134,7 +134,7 @@ pandas==2.2.3
 parameterized==0.9.0
 pg8000==1.31.5
 pillow==12.1.1
-pip==26.0.1
+pip==26.1.2
 pluggy==1.6.0
 propcache==0.4.1
 proto-plus==1.27.2
@@ -175,7 +175,7 @@ setuptools==82.0.1
 six==1.17.0
 sniffio==1.3.1
 sortedcontainers==2.4.0
-soupsieve==2.8.3
+soupsieve==2.8.4
 SQLAlchemy==2.0.48
 sqlalchemy_pytds==1.0.2
 sqlparse==0.5.5
