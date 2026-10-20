@@ -23,7 +23,7 @@
 
 aiofiles==25.1.0
 aiohappyeyeballs==2.6.1
-aiohttp==3.13.4
+aiohttp==3.14.4
 aiosignal==1.4.0
 annotated-types==0.7.0
 anyio==4.13.0
@@ -118,8 +118,8 @@ MarkupSafe==3.0.3
 mmh3==5.2.1
 mock==5.2.0
 more-itertools==10.8.0
-multidict==6.7.1
-nltk==3.9.4
+multidict==6.9.1
+nltk==3.10.3
 numpy==2.4.4
 oauth2client==4.1.3
 objsize==0.7.1
@@ -149,7 +149,7 @@ pydantic==2.12.5
 pydantic_core==2.41.5
 Pygments==2.20.0
 PyHamcrest==2.1.0
-pymongo==4.16.0
+pymongo==4.18.2
 PyMySQL==1.1.2
 pyparsing==3.3.2
 pyproject_hooks==1.2.0
@@ -187,7 +187,7 @@ typing-inspection==0.4.2
 typing_extensions==4.15.0
 tzdata==2025.3
 uritemplate==4.2.0
-urllib3==2.6.3
+urllib3==2.8.0
 virtualenv-clone==0.5.7
 websockets==16.0
 wheel==0.46.3
